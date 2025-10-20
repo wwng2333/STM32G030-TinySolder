@@ -42,11 +42,11 @@
 #define PWM_MAX_DUTY        (PWM_PERIOD - 1)
 
 // PID 控制参数
-#define PID_KP              10.0f
-#define PID_KI              0.5f
-#define PID_KD              1.0f
-#define PID_INTEGRAL_MAX    1000.0f
-#define PID_INTEGRAL_MIN    -1000.0f
+#define PID_KP              8.0f
+#define PID_KI              0.0f
+#define PID_KD              0.0f
+#define PID_INTEGRAL_MAX    1999.0f
+#define PID_INTEGRAL_MIN    0.0f
 
 // 温度校准点 (ADC原始值 -> 实际温度 °C)
 // 结构体定义
@@ -157,7 +157,7 @@ int main(void)
   while (1)
   {
     LL_TIM_OC_SetCompareCH1(TIM3, 0);
-    LL_mDelay(1);
+    LL_mDelay(2);
     t12_now = calculateTemp(T12_ADC_Read());
 
     if (t12_now > 480) {
@@ -168,7 +168,6 @@ int main(void)
 
         // 如果温差大于阈值，使用开关控制
         if (abs(error) > BANG_BANG_THRESHOLD) {
-            printf("0-1, err=%d\n", error);
             if (error > 0) {
                 // 温度远低于目标，全速加热
                 t12_pwm = PWM_MAX_DUTY; 
@@ -182,10 +181,10 @@ int main(void)
             t12_pid.last_measurement = t12_now; 
         } else {
             // 温差小于等于阈值，使用PID精确控制
-            printf("pid, err=%d\n", error);
             t12_pwm = calculate_pid_pwm(&t12_pid, temp_target, t12_now);
         }
     }
+		printf("%dC, %d%%\n", t12_now, t12_pwm/20);
     LL_TIM_OC_SetCompareCH1(TIM3, t12_pwm);
   
     u8g2_FirstPage(&u8g2);
@@ -203,7 +202,7 @@ int main(void)
       sprintf(sprintf_tmp, "T12:%d, %d%%", t12_now, t12_pwm/20);
       u8g2_DrawStr(&u8g2, 0, 46, sprintf_tmp);
     } while (u8g2_NextPage(&u8g2));
-    LL_mDelay(20);
+    LL_mDelay(48);
 
     /* USER CODE END WHILE */
 

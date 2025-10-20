@@ -302,7 +302,7 @@ uint16_t AdcGetValue(uint32_t ch)
 	}
 	
   LL_ADC_REG_SetSequencerRanks(ADC1, LL_ADC_REG_RANK_1, ch);
-	LL_ADC_SetChannelSamplingTime(ADC1, ch, LL_ADC_SAMPLINGTIME_160CYCLES_5);
+	//LL_ADC_SetChannelSamplingTime(ADC1, ch, LL_ADC_SAMPLINGTIME_160CYCLES_5);
 	
   for(i=0;i<16;i++)
   {
@@ -317,16 +317,24 @@ uint16_t AdcGetValue(uint32_t ch)
   return (uint16_t)(sum >> 4);
 }
 
+/**
+  * @brief  读取内部参考电压 (VREFINT) 并计算出VDDA的实际电压。
+  * @retval VDDA 电压值 (单位: mV)。
+  */
 uint16_t Vref_Read(void) //LL_ADC_CHANNEL_VREFINT
 {
-	uint16_t result;
-	result = AdcGetValue(LL_ADC_CHANNEL_VREFINT);
+	uint16_t adc_raw_vref;
+	adc_raw_vref = AdcGetValue(LL_ADC_CHANNEL_VREFINT);
 	//printf("vref read %d, ", result);
-	Vref = __LL_ADC_CALC_VREFANALOG_VOLTAGE(result, LL_ADC_RESOLUTION_12B);
+	Vref = __LL_ADC_CALC_VREFANALOG_VOLTAGE(adc_raw_vref, LL_ADC_RESOLUTION_12B);
 	//printf("%hu mV\n", Vref);
 	return Vref;
 }
 
+/**
+  * @brief  读取输入电压 (Vin) 并计算实际电压。
+  * @retval 经过分压电路还原后的实际输入电压 (单位: mV)。
+  */
 uint16_t Vin_Read(void) //LL_ADC_CHANNEL_11
 {
 	uint16_t result;
@@ -336,6 +344,10 @@ uint16_t Vin_Read(void) //LL_ADC_CHANNEL_11
 	//printf("%hu mV\n", Vin);
 }
 
+/**
+  * @brief  读取内部温度传感器并计算出实际温度。
+  * @retval 芯片温度 (单位: °C)。
+  */
 uint16_t Temp_ADC_Read(void)
 {
 	uint16_t result;
@@ -346,6 +358,10 @@ uint16_t Temp_ADC_Read(void)
 	//printf("%hu C\n", temp_adc);
 }
 
+/**
+  * @brief  读取 T12 相关的ADC值，并转换为电压。
+  * @retval 测量到的电压 (单位: mV)。
+  */
 uint16_t T12_ADC_Read(void)
 {
 	uint16_t result;
