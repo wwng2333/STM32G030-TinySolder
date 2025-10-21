@@ -89,16 +89,12 @@ void MX_TIM14_Init(void)
   /* Peripheral clock enable */
   LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_TIM14);
 
-  /* TIM14 interrupt Init */
-  NVIC_SetPriority(TIM14_IRQn, 0);
-  NVIC_EnableIRQ(TIM14_IRQn);
-
   /* USER CODE BEGIN TIM14_Init 1 */
 
   /* USER CODE END TIM14_Init 1 */
-  TIM_InitStruct.Prescaler = 15999;
+  TIM_InitStruct.Prescaler = 15;
   TIM_InitStruct.CounterMode = LL_TIM_COUNTERMODE_UP;
-  TIM_InitStruct.Autoreload = 49;
+  TIM_InitStruct.Autoreload = 999;
   TIM_InitStruct.ClockDivision = LL_TIM_CLOCKDIVISION_DIV1;
   LL_TIM_Init(TIM14, &TIM_InitStruct);
   LL_TIM_EnableARRPreload(TIM14);
