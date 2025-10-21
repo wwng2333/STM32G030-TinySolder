@@ -27,6 +27,7 @@
 /* USER CODE BEGIN Includes */
 #include "EventRecorder.h"
 #include "stdlib.h"
+#include "arm_math.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -40,6 +41,13 @@ typedef enum {
     STATE_CALCULATE_PWM,    // 计算新的PWM
     STATE_UPDATE_DISPLAY    // 更新OLED显示
 } T12_Control_State_t;
+
+// 温度校准点 (ADC原始值 -> 实际温度 °C)
+// 结构体定义
+typedef struct {
+    uint16_t adc_val;
+    uint16_t temp_c;
+} TempCalibrationPoint;
 
 /* USER CODE END PTD */
 
@@ -56,6 +64,7 @@ typedef enum {
 #define PID_KD              0.0f
 #define PID_INTEGRAL_MAX    1999.0f
 #define PID_INTEGRAL_MIN    0.0f
+#define PID_DELTA_T         1 // 50ms
 
 #define NUM_CALIBRATION_POINTS (sizeof(temp_calibration_table) / sizeof(TempCalibrationPoint))
 #define DEFAULT_TARGET_TEMP 100
@@ -70,13 +79,6 @@ typedef enum {
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
-// 温度校准点 (ADC原始值 -> 实际温度 °C)
-// 结构体定义
-typedef struct {
-    uint16_t adc_val;
-    uint16_t temp_c;
-} TempCalibrationPoint;
 
 // 校准数据表
 const TempCalibrationPoint temp_calibration_table[] = {
@@ -96,11 +98,17 @@ PID_Controller t12_pid = {
     .last_measurement = 0 // 为改进的D项新增
 };
 
+arm_pid_instance_f32 PID = {
+        .Kp = PID_KP,
+        .Ki = PID_KI * PID_DELTA_T,    
+        .Kd = PID_KD / PID_DELTA_T 
+    };
+
 T12_Control_State_t t12_state = STATE_PWM_OFF_WAIT_STABLE;
 uint32_t uWTick = 0;   // 自芯片启动以来的ms
 uint32_t last_time_check = 0;   // 上次执行时间
-const uint32_t ADC_STABLE_WAIT_MS = 1; // 测温稳定等待时间 (替代 LL_mDelay(1))
-const uint32_t CONTROL_PERIOD_MS = 20; // 主控制周期 (替代 LL_mDelay(20))
+const uint32_t ADC_STABLE_WAIT_MS = 1; // 测温稳定等待时间
+const uint32_t CONTROL_PERIOD_MS = 50; // 主控制周期
 
 // 存储编码器计数值（旋转步数）
 volatile int16_t rotaryCount = 0; 
@@ -110,6 +118,10 @@ volatile uint8_t lastCLKState = 0;
 char sprintf_tmp[16];
 static u8g2_t u8g2;
 uint16_t t12_now = 0, t12_pwm = 0, temp_target = DEFAULT_TARGET_TEMP;
+
+// 屏幕刷新计时器和周期
+uint32_t last_display_time = 0; // 上次屏幕刷新时间
+const uint32_t DISPLAY_PERIOD_MS = 100; // 屏幕刷新周期 100ms
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -165,6 +177,7 @@ int main(void)
   /* Initialize interrupts */
   MX_NVIC_Init();
   /* USER CODE BEGIN 2 */
+	arm_pid_init_f32(&PID, 1);
   Activate_ADC();
   u8g2_Setup_ssd1306_128x64_noname_f(&u8g2, U8G2_R0, u8x8_byte_4wire_hw_spi, u8x8_stm32_gpio_and_delay);
   u8g2_InitDisplay(&u8g2);
@@ -182,14 +195,14 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-		uint32_t current_time = uWTick;
+    uint32_t current_time = uWTick;
+    Get_Rotary_Step_And_Clear();
+    // =========================================================================
+    // 状态机控制逻辑
+    // =========================================================================
 
-		// =========================================================================
-		// 状态机控制逻辑
-		// =========================================================================
-
-		switch (t12_state)
-			{
+    switch (t12_state)
+      {
         case STATE_HEATING:
             // 状态 0: 加热中，等待下一个控制周期
             if (current_time - last_time_check >= CONTROL_PERIOD_MS)
@@ -223,7 +236,7 @@ int main(void)
             {
                 int16_t temp_error = (int16_t)temp_target - (int16_t)t12_now;
 
-                if (temp_error > 0) // 需要加热
+                if (temp_error > 20) // 需要加热
                 {
                     if (temp_error > 20)
                     {
@@ -254,23 +267,16 @@ int main(void)
 
         case STATE_UPDATE_DISPLAY:
             // 状态 4: 更新OLED显示 (可以增加一个更慢的计时器来控制显示频率)
-            u8g2_FirstPage(&u8g2);
-            do
+            if (current_time - last_display_time >= DISPLAY_PERIOD_MS)
             {
-              u8g2_SetFontMode(&u8g2, 1);
-              u8g2_SetFontDirection(&u8g2, 0);
-              u8g2_SetFont(&u8g2, u8g2_font_9x15_tr);
-              sprintf(sprintf_tmp, "vcc:%d mV", Vref_Read());
-              u8g2_DrawStr(&u8g2, 0, 10, sprintf_tmp);
-              sprintf(sprintf_tmp, "vin:%d mV", Vin_Read());
-              u8g2_DrawStr(&u8g2, 0, 22, sprintf_tmp);
-              sprintf(sprintf_tmp, "tmp:%d C", Temp_ADC_Read());
-              u8g2_DrawStr(&u8g2, 0, 34, sprintf_tmp);
-              sprintf(sprintf_tmp, "%d, %d, %d%%", temp_target, t12_now, t12_pwm/20);
-              u8g2_DrawStr(&u8g2, 0, 46, sprintf_tmp);
-              sprintf(sprintf_tmp, "enc:%d", Get_Rotary_Step_And_Clear());
-              u8g2_DrawStr(&u8g2, 0, 58, sprintf_tmp);
-            } while (u8g2_NextPage(&u8g2));
+                u8g2_FirstPage(&u8g2);
+                do
+                {
+                  draw_t12_ui(&u8g2);
+                } while (u8g2_NextPage(&u8g2));
+                
+                last_display_time = current_time; // 更新屏幕刷新时间
+            }
             
             t12_state = STATE_HEATING; // 切换回加热等待状态，开始下一个周期
             break;
@@ -280,56 +286,6 @@ int main(void)
             t12_state = STATE_HEATING;
             break;
     }
-//    LL_TIM_OC_SetCompareCH1(TIM3, 0);
-//    LL_mDelay(2);
-//    t12_now = calculateTemp(T12_ADC_Read());
-
-//    if (t12_now > 480) {
-//        t12_pwm = 0; // 过热保护
-//    } else {
-//        // --- 混合控制逻辑 ---
-//        int16_t error = temp_target - t12_now;
-
-//        // 如果温差大于阈值，使用开关控制
-//        if (abs(error) > BANG_BANG_THRESHOLD) {
-//            if (error > 0) {
-//                // 温度远低于目标，全速加热
-//                t12_pwm = PWM_MAX_DUTY; 
-//            } else {
-//                // 温度高于目标（通常是降温时），关闭加热
-//                t12_pwm = 0;
-//            }
-//            // 【关键】重置PID积分项，为平滑切换做准备
-//            t12_pid.integral_sum = 0;
-//            // 同时更新last_measurement，防止D项在切换时产生尖峰
-//            t12_pid.last_measurement = t12_now; 
-//        } else {
-//            // 温差小于等于阈值，使用PID精确控制
-//            t12_pwm = calculate_pid_pwm(&t12_pid, temp_target, t12_now);
-//        }
-//    }
-//    printf("%dC, %d%%\n", t12_now, t12_pwm/20);
-//    LL_TIM_OC_SetCompareCH1(TIM3, t12_pwm);
-//  
-//    u8g2_FirstPage(&u8g2);
-//    do
-//    {
-//      u8g2_SetFontMode(&u8g2, 1);
-//      u8g2_SetFontDirection(&u8g2, 0);
-//      u8g2_SetFont(&u8g2, u8g2_font_9x15_tr);
-//      sprintf(sprintf_tmp, "vcc:%d mV", Vref_Read());
-//      u8g2_DrawStr(&u8g2, 0, 10, sprintf_tmp);
-//      sprintf(sprintf_tmp, "vin:%d mV", Vin_Read());
-//      u8g2_DrawStr(&u8g2, 0, 22, sprintf_tmp);
-//      sprintf(sprintf_tmp, "tmp:%d C", Temp_ADC_Read());
-//      u8g2_DrawStr(&u8g2, 0, 34, sprintf_tmp);
-//      sprintf(sprintf_tmp, "T12:%d, %d%%", t12_now, t12_pwm/20);
-//      u8g2_DrawStr(&u8g2, 0, 46, sprintf_tmp);
-//      sprintf(sprintf_tmp, "enc:%d", Get_Rotary_Step_And_Clear());
-//      u8g2_DrawStr(&u8g2, 0, 58, sprintf_tmp);
-//    } while (u8g2_NextPage(&u8g2));
-//    LL_mDelay(48);
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -383,8 +339,6 @@ static void MX_NVIC_Init(void)
 
 /* USER CODE BEGIN 4 */
 
-volatile uint8_t control_flag = 0;
-
 uint16_t map(int32_t x, int32_t in_min, int32_t in_max, int32_t out_min, int32_t out_max)
 {
   // 增加边界检查，防止除以零
@@ -426,36 +380,44 @@ uint16_t calculateTemp(uint16_t RawTemp)
 
 uint16_t calculate_pid_pwm(PID_Controller *pid, uint16_t target, uint16_t current)
 {
-    int16_t error = (int16_t)target - (int16_t)current;
-    float P_term, I_term, D_term;
-    float output;
-    
-    // 采样时间 (dt)，因为我们用了定时器中断，所以这是一个常量
-    const float dt = 0.05f; // 50ms
+	int16_t error = (int16_t)target - (int16_t)current;
+	int16_t output;
+	output = arm_pid_f32(&PID, error);
+	if (output > PID_INTEGRAL_MAX) {
+		output = PID_INTEGRAL_MAX;
+	} else if (output < PID_INTEGRAL_MIN) {
+		output = PID_INTEGRAL_MIN;
+	}
+	return (uint16_t)output;
+//    float P_term, I_term, D_term;
+//    float output;
+//    
+//    // 采样时间 (dt)，因为我们用了定时器中断，所以这是一个常量
+//    const float dt = 0.05f; // 50ms
 
-    // 比例项 (P)
-    P_term = pid->Kp * error;
+//    // 比例项 (P)
+//    P_term = pid->Kp * error;
 
-    // 积分项 (I)
-    pid->integral_sum += (float)error * dt; // 积分项与时间相关
-    // 积分限幅
-    if (pid->integral_sum > PID_INTEGRAL_MAX) pid->integral_sum = PID_INTEGRAL_MAX;
-    if (pid->integral_sum < PID_INTEGRAL_MIN) pid->integral_sum = PID_INTEGRAL_MIN;
-    I_term = pid->Ki * pid->integral_sum;
+//    // 积分项 (I)
+//    pid->integral_sum += (float)error * dt; // 积分项与时间相关
+//    // 积分限幅
+//    if (pid->integral_sum > PID_INTEGRAL_MAX) pid->integral_sum = PID_INTEGRAL_MAX;
+//    if (pid->integral_sum < PID_INTEGRAL_MIN) pid->integral_sum = PID_INTEGRAL_MIN;
+//    I_term = pid->Ki * pid->integral_sum;
 
-    // 微分项 (D) - 基于测量值变化 (Derivative on Measurement)
-    // 避免了目标值突变带来的微分冲击
-    D_term = pid->Kd * ((float)current - (float)pid->last_measurement) / dt;
-    pid->last_measurement = current; // 更新上次的测量值
+//    // 微分项 (D) - 基于测量值变化 (Derivative on Measurement)
+//    // 避免了目标值突变带来的微分冲击
+//    D_term = pid->Kd * ((float)current - (float)pid->last_measurement) / dt;
+//    pid->last_measurement = current; // 更新上次的测量值
 
-    // PID输出计算 (注意D项是负的，因为它是对输出起抑制作用)
-    output = P_term + I_term - D_term;
+//    // PID输出计算 (注意D项是负的，因为它是对输出起抑制作用)
+//    output = P_term + I_term - D_term;
 
-    // 输出限幅
-    if (output > PWM_MAX_DUTY) output = PWM_MAX_DUTY;
-    if (output < 0.0) output = 0.0;
+//    // 输出限幅
+//    if (output > PWM_MAX_DUTY) output = PWM_MAX_DUTY;
+//    if (output < 0.0) output = 0.0;
 
-    return (uint16_t)output;
+//    return (uint16_t)output;
 }
 
 /**
@@ -466,17 +428,34 @@ int16_t Get_Rotary_Step_And_Clear(void)
 {
     int16_t step = 0;
     step = rotaryCount;
-		if(step > 0)
-		{
-			temp_target += 5;
-		} 
-		else if(step < 0)
-		{
-			temp_target -= 5;
-		}
+    if(step > 0)
+    {
+      temp_target += 5;
+    } 
+    else if(step < 0)
+    {
+      temp_target -= 5;
+    }
     rotaryCount = 0; // 清除计数值
     return step;
 }
+
+/**
+ * @brief 绘制T12烙铁控制器的UI界面 (适配 128x64 分辨率)
+ */
+void draw_t12_ui(u8g2_t *u8g2)
+{
+    u8g2_SetFontMode(u8g2, 1);
+    u8g2_SetFontDirection(u8g2, 0);
+    u8g2_SetFont(u8g2, u8g2_font_9x15_tr);
+    sprintf(sprintf_tmp, "%d %d", Vref_Read(), Vin_Read());
+    u8g2_DrawStr(u8g2, 0, 10, sprintf_tmp);
+    sprintf(sprintf_tmp, "tmp:%d C", Temp_ADC_Read());
+    u8g2_DrawStr(u8g2, 0, 22, sprintf_tmp);
+    sprintf(sprintf_tmp, "%3d,%3d,%d%%", temp_target, t12_now, t12_pwm/20);
+    u8g2_DrawStr(u8g2, 0, 34, sprintf_tmp);
+}
+
 /* USER CODE END 4 */
 
 /**
