@@ -59,9 +59,9 @@ typedef struct {
 #define PWM_MAX_DUTY        (PWM_PERIOD - 1)
 
 // PID 控制参数
-#define PID_KP              1.05f
-#define PID_KI              0.015f
-#define PID_KD              0.02f
+#define PID_KP              5.f
+#define PID_KI              1.f
+#define PID_KD              0.2f
 #define PID_INTEGRAL_MAX    1999.0f
 #define PID_INTEGRAL_MIN    0.0f
 #define PID_DELTA_T         1 // 50ms
@@ -98,7 +98,7 @@ arm_pid_instance_f32 PID = {
 T12_Control_State_t t12_state = STATE_PWM_OFF_WAIT_STABLE;
 uint32_t uWTick = 0;   // 自芯片启动以来的ms
 uint32_t last_time_check = 0;   // 上次执行时间
-const uint32_t ADC_STABLE_WAIT_MS = 10; // 测温稳定等待时间
+const uint32_t ADC_STABLE_WAIT_MS = 1; // 测温稳定等待时间
 const uint32_t CONTROL_PERIOD_MS = 100; // 主控制周期
 
 // 存储编码器计数值（旋转步数）
