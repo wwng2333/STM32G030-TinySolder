@@ -294,6 +294,7 @@ void Activate_ADC(void)
 uint16_t AdcGetValue(uint32_t ch)
 {
   uint32_t i,sum = 0;
+	uint32_t tmp;
 	
 	LL_ADC_REG_StopConversion(ADC1);
 	while(LL_ADC_REG_IsConversionOngoing(ADC1) != 0)
@@ -311,7 +312,9 @@ uint16_t AdcGetValue(uint32_t ch)
 		{
 			;
 		}
-    sum += LL_ADC_REG_ReadConversionData12(ADC1);
+    tmp = LL_ADC_REG_ReadConversionData12(ADC1);
+		sum += tmp;
+		//SEGGER_RTT_printf(0,"%d\n", tmp);
 		LL_ADC_ClearFlag_EOC(ADC1);
   }
   return (uint16_t)(sum >> 4);
@@ -325,9 +328,8 @@ uint16_t Vref_Read(void) //LL_ADC_CHANNEL_VREFINT
 {
 	uint16_t adc_raw_vref;
 	adc_raw_vref = AdcGetValue(LL_ADC_CHANNEL_VREFINT);
-	//printf("vref read %d, ", result);
+	//printf("vref read %d", result);
 	Vref = __LL_ADC_CALC_VREFANALOG_VOLTAGE(adc_raw_vref, LL_ADC_RESOLUTION_12B);
-	//printf("%hu mV\n", Vref);
 	return Vref;
 }
 
@@ -341,7 +343,7 @@ uint16_t Vin_Read(void) //LL_ADC_CHANNEL_11
 	result = AdcGetValue(LL_ADC_CHANNEL_11);
 	//printf("vin read %d, ", result);
 	return (__LL_ADC_CALC_DATA_TO_VOLTAGE(Vref, result, LL_ADC_RESOLUTION_12B)*11); // ((47 + 4.7) / 4.7) = 11
-	//printf("%hu mV\n", Vin);
+	//return (__LL_ADC_CALC_DATA_TO_VOLTAGE(3300, result, LL_ADC_RESOLUTION_12B)*11); // ((47 + 4.7) / 4.7) = 11
 }
 
 /**
@@ -355,7 +357,7 @@ uint16_t Temp_ADC_Read(void)
 	//printf("temp read %d\n", result);
 	
 	return __LL_ADC_CALC_TEMPERATURE(Vref, result, LL_ADC_RESOLUTION_12B);
-	//printf("%hu C\n", temp_adc);
+	//return __LL_ADC_CALC_TEMPERATURE(3300, result, LL_ADC_RESOLUTION_12B);
 }
 
 /**
@@ -368,7 +370,7 @@ uint16_t T12_ADC_Read(void)
 	result = AdcGetValue(LL_ADC_CHANNEL_10);
 	//printf("t12 read %d\n", result);
 	return __LL_ADC_CALC_DATA_TO_VOLTAGE(Vref, result, LL_ADC_RESOLUTION_12B);
-	//printf("%hu C\n", temp_adc);
+	//return __LL_ADC_CALC_DATA_TO_VOLTAGE(3300, result, LL_ADC_RESOLUTION_12B);
 }
 
 /* USER CODE END 1 */

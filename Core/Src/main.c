@@ -59,15 +59,15 @@ typedef struct {
 #define PWM_MAX_DUTY        (PWM_PERIOD - 1)
 
 // PID 控制参数
-#define PID_KP              8.0f
-#define PID_KI              0.0f
-#define PID_KD              0.0f
+#define PID_KP              1.05f
+#define PID_KI              0.015f
+#define PID_KD              0.02f
 #define PID_INTEGRAL_MAX    1999.0f
 #define PID_INTEGRAL_MIN    0.0f
 #define PID_DELTA_T         1 // 50ms
 
 #define NUM_CALIBRATION_POINTS (sizeof(temp_calibration_table) / sizeof(TempCalibrationPoint))
-#define DEFAULT_TARGET_TEMP 100
+#define DEFAULT_TARGET_TEMP 205
 #define BANG_BANG_THRESHOLD 20 // 切换PID控制的温差阈值
 /* USER CODE END PD */
 
@@ -89,15 +89,6 @@ const TempCalibrationPoint temp_calibration_table[] = {
     // 可以根据需要添加更多点
 };
 
-PID_Controller t12_pid = {
-    .Kp = PID_KP,
-    .Ki = PID_KI,
-    .Kd = PID_KD,
-    .integral_sum = 0,
-    .last_error = 0,
-    .last_measurement = 0 // 为改进的D项新增
-};
-
 arm_pid_instance_f32 PID = {
         .Kp = PID_KP,
         .Ki = PID_KI * PID_DELTA_T,    
@@ -107,8 +98,8 @@ arm_pid_instance_f32 PID = {
 T12_Control_State_t t12_state = STATE_PWM_OFF_WAIT_STABLE;
 uint32_t uWTick = 0;   // 自芯片启动以来的ms
 uint32_t last_time_check = 0;   // 上次执行时间
-const uint32_t ADC_STABLE_WAIT_MS = 1; // 测温稳定等待时间
-const uint32_t CONTROL_PERIOD_MS = 50; // 主控制周期
+const uint32_t ADC_STABLE_WAIT_MS = 10; // 测温稳定等待时间
+const uint32_t CONTROL_PERIOD_MS = 100; // 主控制周期
 
 // 存储编码器计数值（旋转步数）
 volatile int16_t rotaryCount = 0; 
@@ -118,7 +109,7 @@ volatile uint8_t lastCLKState = 0;
 char sprintf_tmp[16];
 static u8g2_t u8g2;
 uint16_t t12_now = 0, t12_pwm = 0, temp_target = DEFAULT_TARGET_TEMP;
-
+float input, output=0;
 // 屏幕刷新计时器和周期
 uint32_t last_display_time = 0; // 上次屏幕刷新时间
 const uint32_t DISPLAY_PERIOD_MS = 100; // 屏幕刷新周期 100ms
@@ -140,8 +131,7 @@ static void MX_NVIC_Init(void);
   * @brief  The application entry point.
   * @retval int
   */
-int main(void)
-{
+int main(void){
   /* USER CODE BEGIN 1 */
   EventRecorderInitialize(EventRecordAll, 1U);
   EventRecorderStart();
@@ -177,7 +167,7 @@ int main(void)
   /* Initialize interrupts */
   MX_NVIC_Init();
   /* USER CODE BEGIN 2 */
-	arm_pid_init_f32(&PID, 1);
+  arm_pid_init_f32(&PID, 1);
   Activate_ADC();
   u8g2_Setup_ssd1306_128x64_noname_f(&u8g2, U8G2_R0, u8x8_byte_4wire_hw_spi, u8x8_stm32_gpio_and_delay);
   u8g2_InitDisplay(&u8g2);
@@ -209,7 +199,6 @@ int main(void)
             {
                 // 周期时间到，准备进入测温阶段
                 LL_TIM_OC_SetCompareCH1(TIM3, 0); // 关闭加热
-                
                 last_time_check = current_time; // 重置计时器
                 t12_state = STATE_PWM_OFF_WAIT_STABLE; // 切换到等待稳定状态
             }
@@ -227,7 +216,7 @@ int main(void)
         case STATE_MEASURE_TEMP:
             // 状态 2: 读取ADC温度
             t12_now = calculateTemp(T12_ADC_Read()); 
-            
+            //printf("t12:%d ", t12_now);
             t12_state = STATE_CALCULATE_PWM; // 切换到计算PWM状态
             break;
 
@@ -235,30 +224,19 @@ int main(void)
             // 状态 3: 计算新的PWM值
             {
                 int16_t temp_error = (int16_t)temp_target - (int16_t)t12_now;
-
-                if (temp_error > 20) // 需要加热
+                if (temp_error > BANG_BANG_THRESHOLD)
                 {
-                    if (temp_error > 20)
-                    {
-                        // 开关控制：全速加热
-                        t12_pwm = 1999;
-                        // 重置积分项
-                        t12_pid.integral_sum = 0.0f; 
-                        t12_pid.last_error = 0;
-                    }
-                    else
-                    {
-                        // PID控制：精确控温
-                        t12_pwm = calculate_pid_pwm(&t12_pid, temp_target, t12_now);
-                    }
+                  // 开关控制：全速加热
+                  //t12_pwm = 1999;
+                  t12_pwm = calculate_pid_pwm(temp_target, t12_now);
                 }
-                else // 温度已达目标或过高
+                else
                 {
-                    t12_pwm = 0; // 关闭加热
-                    // 防止积分项累积
-                    t12_pid.integral_sum = 0.0f;
-                    t12_pid.last_error = temp_error;
+                  // PID控制：精确控温
+                  t12_pwm = calculate_pid_pwm(temp_target, t12_now);
                 }
+                SEGGER_RTT_printf(0,"%d %d %d\n", temp_target, t12_now, t12_pwm);
+                //printf("err:%d pwm:%d\n", temp_error, t12_pwm);
                 LL_TIM_OC_SetCompareCH1(TIM3, t12_pwm); // 应用新的加热功率
             }
             last_time_check = uWTick; // 重新开始计时，用于下一个控制周期
@@ -277,7 +255,6 @@ int main(void)
                 
                 last_display_time = current_time; // 更新屏幕刷新时间
             }
-            
             t12_state = STATE_HEATING; // 切换回加热等待状态，开始下一个周期
             break;
 
@@ -378,46 +355,17 @@ uint16_t calculateTemp(uint16_t RawTemp)
                temp_calibration_table[NUM_CALIBRATION_POINTS-1].temp_c);
 }
 
-uint16_t calculate_pid_pwm(PID_Controller *pid, uint16_t target, uint16_t current)
+uint16_t calculate_pid_pwm(uint16_t target, uint16_t current)
 {
-	int16_t error = (int16_t)target - (int16_t)current;
-	int16_t output;
-	output = arm_pid_f32(&PID, error);
-	if (output > PID_INTEGRAL_MAX) {
-		output = PID_INTEGRAL_MAX;
-	} else if (output < PID_INTEGRAL_MIN) {
-		output = PID_INTEGRAL_MIN;
-	}
-	return (uint16_t)output;
-//    float P_term, I_term, D_term;
-//    float output;
-//    
-//    // 采样时间 (dt)，因为我们用了定时器中断，所以这是一个常量
-//    const float dt = 0.05f; // 50ms
-
-//    // 比例项 (P)
-//    P_term = pid->Kp * error;
-
-//    // 积分项 (I)
-//    pid->integral_sum += (float)error * dt; // 积分项与时间相关
-//    // 积分限幅
-//    if (pid->integral_sum > PID_INTEGRAL_MAX) pid->integral_sum = PID_INTEGRAL_MAX;
-//    if (pid->integral_sum < PID_INTEGRAL_MIN) pid->integral_sum = PID_INTEGRAL_MIN;
-//    I_term = pid->Ki * pid->integral_sum;
-
-//    // 微分项 (D) - 基于测量值变化 (Derivative on Measurement)
-//    // 避免了目标值突变带来的微分冲击
-//    D_term = pid->Kd * ((float)current - (float)pid->last_measurement) / dt;
-//    pid->last_measurement = current; // 更新上次的测量值
-
-//    // PID输出计算 (注意D项是负的，因为它是对输出起抑制作用)
-//    output = P_term + I_term - D_term;
-
-//    // 输出限幅
-//    if (output > PWM_MAX_DUTY) output = PWM_MAX_DUTY;
-//    if (output < 0.0) output = 0.0;
-
-//    return (uint16_t)output;
+  int16_t error = (int16_t)target - (int16_t)current;
+  int16_t output;
+  output = arm_pid_f32(&PID, error);
+  if (output > PID_INTEGRAL_MAX) {
+    output = PID_INTEGRAL_MAX;
+  } else if (output < PID_INTEGRAL_MIN) {
+    output = PID_INTEGRAL_MIN;
+  }
+  return (uint16_t)output;
 }
 
 /**

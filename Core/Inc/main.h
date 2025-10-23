@@ -49,18 +49,11 @@ extern "C" {
 /* USER CODE BEGIN Includes */
 #include "u8g2.h"
 #include "stdio.h"
+#include "SEGGER_RTT.h"
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
-
-// PID
-typedef struct {
-    float Kp, Ki, Kd;
-    float integral_sum;
-    int16_t last_error;
-	  int16_t last_measurement;
-} PID_Controller;
 
 /* USER CODE END ET */
 
@@ -80,7 +73,7 @@ void Error_Handler(void);
 /* USER CODE BEGIN EFP */
 uint16_t map(int32_t x, int32_t in_min, int32_t in_max, int32_t out_min, int32_t out_max);
 uint16_t calculateTemp(uint16_t RawTemp);
-uint16_t calculate_pid_pwm(PID_Controller *pid, uint16_t target, uint16_t current);
+uint16_t calculate_pid_pwm(uint16_t target, uint16_t current);
 void draw_t12_ui(u8g2_t *u8g2);
 int16_t Get_Rotary_Step_And_Clear(void);
 /* USER CODE END EFP */
